@@ -4,8 +4,8 @@ set -euo pipefail
 DB_USER="${PGUSER:-$(whoami)}"
 DB_HOST="${PGHOST:-localhost}"
 DB_PORT="${PGPORT:-5432}"
-CONFIG_FILE="src/main/resources/application-local.properties"
-CONFIG_VAR="spring.datasource.url"
+CONFIG_FILE="flyway.properties"
+CONFIG_VAR="flyway.url"
 
 project_name() {
   local dir

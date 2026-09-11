@@ -1,5 +1,8 @@
 buildscript {
-        dependencies {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
         // Add your database extension and driver to the buildscript classpath so the plugin can see it
         classpath('org.flywaydb:flyway-database-postgresql:13.4.0')
         classpath 'org.postgresql:postgresql:42.7.3'
@@ -20,12 +23,23 @@ repositories {
 dependencies {
     testImplementation platform('org.junit:junit-bom:6.0.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testRuntimeOnly('org.junit.platform:junit-platform-launcher')
 
-    implementation("org.flywaydb:flyway-database-postgresql:13.4.0")
-    runtimeOnly("org.postgresql:postgresql:42.7.3")
+    implementation('org.flywaydb:flyway-database-postgresql:13.4.0')
+    runtimeOnly('org.postgresql:postgresql:42.7.3')
 }
 
 test {
     useJUnitPlatform()
+}
+
+def flywayProps = new Properties()
+def flywayPropsFile = file('flyway.properties')
+if (flywayPropsFile.exists()) {
+    flywayPropsFile.withInputStream { flywayProps.load(it) }
+}
+
+tasks.matching { it.name.startsWith('flyway') }.configureEach { task ->
+    def target = System.getProperty('flyway.url') ?: flywayProps.getProperty('flyway.url') ?: '(not set)'
+    task.doFirst { println ">>> ${task.name}  ->  ${target}" }
 }
