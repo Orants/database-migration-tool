@@ -5,6 +5,7 @@ build/
 !**/src/test/**/build/
 .kotlin
 flyway.properties
+./git/db-tool.conf
 
 ### IntelliJ IDEA ###
 .idea/modules.xml
