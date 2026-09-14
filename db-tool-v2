@@ -7,6 +7,7 @@ DB_PORT="${PGPORT:-5432}"
 CONFIG_FILE="flyway.properties"
 CONFIG_VAR="flyway.url"
 BRANCH=$(git branch --show-current)
+ROOT=$(git rev-parse --show-toplevel)
 DB_NAME=""
 
 main_db() { printf '%s' "$DB_NAME"; }
@@ -17,10 +18,10 @@ copy_db() {
     printf '%s-%s' "$(main_db)" "$BRANCH"
   fi
 }
-config_path() { printf '%s/%s' "$(git rev-parse --show-toplevel)" "$CONFIG_FILE"; }
+config_path() { printf '%s/%s' "$ROOT" "$CONFIG_FILE"; }
 jdbc_url() { printf 'jdbc:postgresql://%s:%s/%s' "$DB_HOST" "$DB_PORT" "$1"; }
 
-db_conf_path() { printf '%s/.git/db-tool.conf' "$(git rev-parse --show-toplevel)"; }
+db_conf_path() { printf '%s/.git/db-tool.conf' "$ROOT"; }
 load_db_name() {
   local f saved
   f=$(db_conf_path)
@@ -31,7 +32,6 @@ load_db_name() {
 }
 
 save_db_name() { printf '%s\n' "$1" > "$(db_conf_path)"; }
-
 
 ask() {
   psql -X -q -t -A -P pager=off \
@@ -146,7 +146,7 @@ cmd_cleanup() {
   local main cfg new victims name
   require_connection
 
-  main=$DB_NAME
+  main=$(main_db)
   cfg=$(config_path)
 
   victims=$(ask "SELECT datname FROM pg_database
@@ -174,36 +174,34 @@ cmd_cleanup() {
 cmd_init() {
   local root hooks hook sample main cfg new
   require_connection
-  if db_exists "$DB_NAME"; then
-    root=$(git rev-parse --show-toplevel)
-    hooks="$root/.git/hooks"
-    hook="$hooks/post-checkout"
-    sample="$hook.sample"
-    main=$(main_db)
-    cfg=$(config_path)
-    new=$(jdbc_url "$main")
-    set_prop "$cfg" "$CONFIG_VAR" "$new"
 
-    if [ -e  "$sample" ] && [ -e "$hook"]; then
-      mv "$sample" "$hook"
-    fi
+  root="$ROOT"
+  hooks="$root/.git/hooks"
+  hook="$hooks/post-checkout"
+  sample="$hook.sample"
+  main=$(main_db)
+  cfg=$(config_path)
+  new=$(jdbc_url "$main")
+  set_prop "$cfg" "$CONFIG_VAR" "$new"
+  echo "url=$(get_prop "$cfg" "$CONFIG_VAR")"
 
-    cat > "$hook" <<EOF
-  #!/usr/bin/env bash
-  # Installed by db-tools-v2
-  [ "\$3" = "1" ] || exit 0
-  branch=\$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-  if [ "\$branch" = "main" ]; then
-    "$root/db-tool-v2" cleanup || true
-    exit 0
+  if [ -e  "$sample" ] && [ -e "$hook" ]; then
+    mv "$sample" "$hook"
   fi
-  "$root/db-tool-v2" copy || true
+
+  cat > "$hook" <<EOF
+#!/usr/bin/env bash
+# Installed by db-tools-v2
+[ "\$3" = "1" ] || exit 0
+branch=\$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+if [ "\$branch" = "main" ]; then
+  "$root/db-tool-v2" cleanup || true
+  exit 0
+fi
+"$root/db-tool-v2" copy || true
 EOF
-    chmod +x $hook
-    echo "Hook activated"
-  else
-    echo "Database "$DB_NAME" does not exist."
-  fi
+  chmod +x "$hook"
+  echo "Hook activated"
 }
 
 load_db_name
@@ -234,9 +232,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+ case "$DB_NAME" in
+   *[!A-Za-z0-9_-]*) echo "FAIL  name may only contain letters, digits, _ and -" >&2; exit 1 ;;
+ esac
+
 case "$COMMAND" in
   init)    cmd_init ;;
   cleanup) cmd_cleanup ;;
   copy)    cmd_copy ;;
-  *)       echo "usage: $0 [init|cleanup|] [--dbname NAME]" >&2; exit 1 ;;
+  *)       echo "usage: $0 [init|cleanup] [--dbname NAME]" >&2; exit 1 ;;
 esac
