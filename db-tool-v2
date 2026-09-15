@@ -142,33 +142,67 @@ cmd_copy() {
   }
 }
 
+
 cmd_cleanup() {
-  local main cfg new victims name
-  require_connection
-
+  local victims main target found=0
   main=$(main_db)
-  cfg=$(config_path)
-
   victims=$(ask "SELECT datname FROM pg_database
-                 WHERE starts_with(datname, '$main-')
-                   AND datname <> '$main'
-                 ORDER BY datname")
-
-  if [ -z "$victims" ]; then
-    echo "      nothing to drop - only \"$main\" exists"
-  else
+                   WHERE starts_with(datname, '$main-')
+                     AND datname <> '$main'
+                   ORDER BY datname")
+    echo "      Available databases:" >&2
     while IFS= read -r name; do
-      [ -n "$name" ] || continue
-      [ "$name" = "$main" ] && continue
-      disconnect_everyone_from "$name"
-      dropdb --force -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" "$name"
-      echo "      dropped \"$name\""
+      [ -n "$name" ] && echo "        - $name" >&2
     done <<< "$victims"
+
+  target="${1:-}"
+  if [ -z "$target" ]; then
+      echo "To drop a database type ./db-tool-v2 cleanup <database_name>" >&2
+      exit 1
   fi
 
-  new=$(jdbc_url "$main")
-  set_prop "$cfg" "$CONFIG_VAR" "$new"
-  echo "      $CONFIG_VAR now: $(get_prop "$cfg" "$CONFIG_VAR")"
+  if [ "$target" = 'all' ]; then
+    read -p "Are you sure you want to drop all \"$main-*\" databases? [y/n] " -r choice
+    case "$choice" in
+      [yY])
+        while IFS= read -r name; do
+          [ -n "$name" ] || continue
+          [ "$name" = "$main" ] && continue
+          disconnect_everyone_from "$name"
+          dropdb --force -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" "$name"
+          echo "      dropped \"$name\""
+        done <<< "$victims" ;;
+      *)
+        echo "Aborted."
+        exit 0 ;;
+    esac
+    return 0
+  fi
+
+  while IFS= read -r name; do
+    if [ "$name" = "$target" ]; then
+      found=1
+      break
+    fi
+  done <<< "$victims"
+
+  if [ "$found" -eq 0 ]; then
+    echo "FAIL  database \"$target\" is not in the list of removable branch databases" >&2
+    exit 1
+  fi
+
+  read -p "Are you sure you want to drop \"$target\"? [y/n] " -r choice
+  case "$choice" in
+    [yY])
+      disconnect_everyone_from "$target"
+      dropdb --force -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" "$target"
+      echo "      dropped \"$target\""
+      ;;
+    *)
+      echo "Aborted."
+      exit 0
+      ;;
+  esac
 }
 
 cmd_init() {
@@ -202,28 +236,49 @@ EOF
 
 load_db_name
 COMMAND="${1:-}"
-if [ $# -gt 0 ]; then shift; fi    # drop the command, leaving only the flags
+if [ $# -gt 0 ]; then shift; fi
+TARGET_ARG=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --dbname)
-      if [ $# -lt 2 ]; then
-        echo "FAIL  --dbname needs a value" >&2
+    --dbname|--dbname=*)
+      if [ "$COMMAND" != "init" ]; then
+        echo "FAIL  --dbname is only allowed with the 'init' command" >&2
         exit 1
       fi
-      DB_NAME="$2"
+
+      if [ "$1" = "--dbname" ]; then
+        if [ $# -lt 2 ]; then
+          echo "FAIL  --dbname needs a value" >&2
+          exit 1
+        fi
+        DB_NAME="$2"
+        shift 2
+      else
+        DB_NAME="${1#--dbname=}"
+        shift
+      fi
       save_db_name "$DB_NAME"
-      shift 2
       ;;
-    --dbname=*)
-      DB_NAME="${1#--dbname=}"
-      save_db_name "$DB_NAME"
-      shift
-      ;;
-    *)
-      echo "FAIL  unexpected argument: $1" >&2
-      echo "usage: $0 [init|cleanup] [--dbname NAME]" >&2
+
+    -*)
+      echo "FAIL  unexpected option: $1" >&2
       exit 1
+      ;;
+
+    *)
+      if [ "$COMMAND" != "cleanup" ]; then
+        echo "FAIL  unexpected argument '$1' for command '$COMMAND'" >&2
+        exit 1
+      fi
+
+      if [ -z "$TARGET_ARG" ]; then
+        TARGET_ARG="$1"
+      else
+        echo "FAIL  too many arguments provided for 'test'" >&2
+        exit 1
+      fi
+      shift
       ;;
   esac
 done
@@ -234,7 +289,7 @@ done
 
 case "$COMMAND" in
   init)    cmd_init ;;
-  cleanup) cmd_cleanup ;;
+  cleanup) cmd_cleanup "$TARGET_ARG";;
   copy)    cmd_copy ;;
   *)       echo "usage: $0 [init|cleanup] [--dbname NAME]" >&2; exit 1 ;;
 esac
