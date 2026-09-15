@@ -194,10 +194,6 @@ cmd_init() {
 # Installed by db-tools-v2
 [ "\$3" = "1" ] || exit 0
 branch=\$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
-if [ "\$branch" = "main" ]; then
-  "$root/db-tool-v2" cleanup || true
-  exit 0
-fi
 "$root/db-tool-v2" copy || true
 EOF
   chmod +x "$hook"
