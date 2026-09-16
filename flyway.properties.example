@@ -1,0 +1,5 @@
+flyway.url=
+flyway.user=
+flyway.password=
+flyway.locations=filesystem:src/main/resources/db/migration
+
