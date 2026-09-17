@@ -9,7 +9,6 @@ CONFIG_VAR="flyway.url"
 BRANCH=$(git branch --show-current)
 ROOT=$(git rev-parse --show-toplevel)
 DB_NAME=""
-HOOK_MARKER='# db-tool:db_name='
 
 main_db() { printf '%s' "$DB_NAME"; }
 copy_db() {
@@ -21,20 +20,6 @@ copy_db() {
 }
 config_path() { printf '%s/%s' "$ROOT" "$CONFIG_FILE"; }
 jdbc_url() { printf 'jdbc:postgresql://%s:%s/%s' "$DB_HOST" "$DB_PORT" "$1"; }
-
-hook_path() { printf '%s/.git/hooks/post-checkout' "$ROOT"; }
-load_db_name() {
-  local f saved
-  f=$(hook_path)
-  [ -f "$f" ] || return 0
-  saved=$(MARKER="$HOOK_MARKER" awk '
-    index($0, ENVIRON["MARKER"]) == 1 {
-      print substr($0, length(ENVIRON["MARKER"]) + 1)
-      exit
-    }' "$f")
-  [ -n "$saved" ] && DB_NAME="$saved"
-  return 0
-}
 
 ask() {
   psql --no-psqlrc --quiet --tuples-only --no-align --pset=pager=off \
@@ -50,12 +35,12 @@ require_connection() {
   fi
 }
 
-require_db_name() {
-  [ -n "$DB_NAME" ] && return 0
-  echo "FAIL  no template database set for this repo" >&2
-  echo "      run:  ./db-tool init --dbname <name>" >&2
-  echo "      (the name lives in .git/hooks/post-checkout)" >&2
-  exit 1
+valid_name() {
+  case "$1" in
+    "")               echo "FAIL  missing template database name" >&2; return 1 ;;
+    *[!A-Za-z0-9_-]*) echo "FAIL  '$1' - letters, digits, _ and - only" >&2; return 1 ;;
+  esac
+  return 0
 }
 
 db_exists() {
@@ -109,12 +94,12 @@ set_prop() {
 
 cmd_copy() {
   local main copy cfg old new
+  DB_NAME="$1"
+  require_connection
   main=$(main_db)
   copy=$(copy_db)
   cfg=$(config_path)
 
-  require_connection
-  require_db_name
 
   if db_exists "$main"; then
     echo "yes - database \"$main\" exists"
@@ -157,8 +142,9 @@ cmd_copy() {
 
 cmd_cleanup() {
   local victims main target found=0
+  DB_NAME="$1"
+  target="${2:-}"
   require_connection
-  require_db_name
   main=$(main_db)
   victims=$(ask "SELECT datname FROM pg_database
                    WHERE starts_with(datname, '$main-')
@@ -169,9 +155,8 @@ cmd_cleanup() {
       [ -n "$name" ] && echo "        - $name" >&2
     done <<< "$victims"
 
-  target="${1:-}"
   if [ -z "$target" ]; then
-      echo "To drop a database type ./db-tool cleanup <database_name>" >&2
+      echo "To drop a database type ./db-tool cleanup $main <database_name>" >&2
       exit 1
   fi
 
@@ -222,8 +207,6 @@ cmd_cleanup() {
 cmd_init() {
   local root hooks hook sample main cfg new
   require_connection
-  require_db_name
-
   root="$ROOT"
   hooks="$root/.git/hooks"
   hook="$hooks/post-checkout"
@@ -241,69 +224,53 @@ cmd_init() {
   cat > "$hook" <<EOF
 #!/usr/bin/env bash
 # Installed by db-tool
-${HOOK_MARKER}${DB_NAME}
 [ "\$3" = "1" ] || exit 0
-"$root/db-tool" copy || true
+"$root/db-tool" copy "${DB_NAME}" || true
 EOF
   chmod +x "$hook"
   echo "Hook activated"
 }
 
-load_db_name
-COMMAND="${1:-}"
-if [ $# -gt 0 ]; then shift; fi
-TARGET_ARG=""
+  COMMAND="${1:-}"
+  if [ $# -gt 0 ]; then shift; fi
+  ARG1=""
+  ARG2=""
 
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --dbname|--dbname=*)
-      if [ "$COMMAND" != "init" ]; then
-        echo "FAIL  --dbname is only allowed with the 'init' command" >&2
-        exit 1
-      fi
-
-      if [ "$1" = "--dbname" ]; then
-        if [ $# -lt 2 ]; then
-          echo "FAIL  --dbname needs a value" >&2
-          exit 1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dbname)
+        [ "$COMMAND" = init ] || { echo "FAIL  --dbname is only allowed with 'init'" >&2; exit 1; }
+        [ $# -ge 2 ]          || { echo "FAIL  --dbname needs a value" >&2; exit 1; }
+        DB_NAME="$2"; shift 2 ;;
+      --dbname=*)
+        [ "$COMMAND" = init ] || { echo "FAIL  --dbname is only allowed with 'init'" >&2; exit 1; }
+        DB_NAME="${1#--dbname=}"; shift ;;
+      -*)
+        echo "FAIL  unexpected option: $1" >&2; exit 1 ;;
+      *)
+        if   [ -z "$ARG1" ]; then ARG1="$1"
+        elif [ -z "$ARG2" ]; then ARG2="$1"
+        else echo "FAIL  too many arguments for '$COMMAND'" >&2; exit 1
         fi
-        DB_NAME="$2"
-        shift 2
-      else
-        DB_NAME="${1#--dbname=}"
-        shift
-      fi
-      ;;
+        shift ;;
+    esac
+  done
 
-    -*)
-      echo "FAIL  unexpected option: $1" >&2
-      exit 1
-      ;;
-
+  case "$COMMAND" in
+    init)
+      [ -z "$ARG1" ] || { echo "FAIL  unexpected argument '$ARG1' for 'init'" >&2; exit 1; }
+      valid_name "$DB_NAME" || exit 1
+      cmd_init ;;
+    copy)
+      [ -z "$ARG2" ] || { echo "FAIL  too many arguments for 'copy'" >&2; exit 1; }
+      valid_name "$ARG1" || exit 1
+      cmd_copy "$ARG1" ;;
+    cleanup)
+      valid_name "$ARG1" || exit 1
+      cmd_cleanup "$ARG1" "$ARG2" ;;
     *)
-      if [ "$COMMAND" != "cleanup" ]; then
-        echo "FAIL  unexpected argument '$1' for command '$COMMAND'" >&2
-        exit 1
-      fi
-
-      if [ -z "$TARGET_ARG" ]; then
-        TARGET_ARG="$1"
-      else
-        echo "FAIL  too many arguments provided for 'test'" >&2
-        exit 1
-      fi
-      shift
-      ;;
+      echo "usage: $0 init --dbname <template>" >&2
+      echo "       $0 copy <template>" >&2
+      echo "       $0 cleanup <template> [<database>|all]" >&2
+      exit 1 ;;
   esac
-done
-
- case "$DB_NAME" in
-   *[!A-Za-z0-9_-]*) echo "FAIL  name may only contain letters, digits, _ and -" >&2; exit 1 ;;
- esac
-
-case "$COMMAND" in
-  init)    cmd_init ;;
-  cleanup) cmd_cleanup "$TARGET_ARG";;
-  copy)    cmd_copy ;;
-  *)       echo "usage: $0 [init|cleanup] [--dbname NAME]" >&2; exit 1 ;;
-esac
