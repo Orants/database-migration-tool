@@ -15,7 +15,7 @@ copy_db() {
   if [ "$BRANCH" = "main" ]; then
     main_db
   else
-    printf '%s-%s' "$(main_db)" "$BRANCH"
+    printf '%s-%s' "$(main_db)" "${BRANCH//\//-}"
   fi
 }
 config_path() { printf '%s/%s' "$ROOT" "$CONFIG_FILE"; }
@@ -76,6 +76,7 @@ get_prop() {
 
 set_prop() {
   local file="$1" key="$2" value="$3" tmp
+  [ -f "$file" ] || : > "$file"
   tmp=$(mktemp "${TMPDIR:-/tmp}/db-tool.XXXXXX")
   KEY="$key" VAL="$value" awk '
     BEGIN { k = ENVIRON["KEY"]; v = ENVIRON["VAL"]; written = 0 }
@@ -235,7 +236,7 @@ EOF
   if [ $# -gt 0 ]; then shift; fi
   ARG1=""
   ARG2=""
-
+main(){
   while [ $# -gt 0 ]; do
     case "$1" in
       --dbname)
@@ -274,3 +275,7 @@ EOF
       echo "       $0 cleanup <template> [<database>|all]" >&2
       exit 1 ;;
   esac
+}
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi
