@@ -9,6 +9,7 @@ CONFIG_VAR="flyway.url"
 BRANCH=$(git branch --show-current)
 ROOT=$(git rev-parse --show-toplevel)
 DB_NAME=""
+HOOK_MARKER='# db-tool:db_name='
 
 main_db() { printf '%s' "$DB_NAME"; }
 copy_db() {
@@ -21,17 +22,19 @@ copy_db() {
 config_path() { printf '%s/%s' "$ROOT" "$CONFIG_FILE"; }
 jdbc_url() { printf 'jdbc:postgresql://%s:%s/%s' "$DB_HOST" "$DB_PORT" "$1"; }
 
-db_conf_path() { printf '%s/.git/db-tool.conf' "$ROOT"; }
+hook_path() { printf '%s/.git/hooks/post-checkout' "$ROOT"; }
 load_db_name() {
   local f saved
-  f=$(db_conf_path)
+  f=$(hook_path)
   [ -f "$f" ] || return 0
-  saved=$(head -n 1 "$f")
+  saved=$(MARKER="$HOOK_MARKER" awk '
+    index($0, ENVIRON["MARKER"]) == 1 {
+      print substr($0, length(ENVIRON["MARKER"]) + 1)
+      exit
+    }' "$f")
   [ -n "$saved" ] && DB_NAME="$saved"
   return 0
 }
-
-save_db_name() { printf '%s\n' "$1" > "$(db_conf_path)"; }
 
 ask() {
   psql --no-psqlrc --quiet --tuples-only --no-align --pset=pager=off \
@@ -45,6 +48,14 @@ require_connection() {
     echo "      wrong user?      run 'whoami' and set PGUSER, or edit DB_USER" >&2
     exit 1
   fi
+}
+
+require_db_name() {
+  [ -n "$DB_NAME" ] && return 0
+  echo "FAIL  no template database set for this repo" >&2
+  echo "      run:  ./db-tool init --dbname <name>" >&2
+  echo "      (the name lives in .git/hooks/post-checkout)" >&2
+  exit 1
 }
 
 db_exists() {
@@ -92,7 +103,7 @@ set_prop() {
       print }
     END { if (!written) print k "=" v }
   ' "$file" > "$tmp"
-  cat "$tmp" > "$file"    # copy back, so permissions and inode survive
+  cat "$tmp" > "$file"
   rm -f "$tmp"
 }
 
@@ -103,6 +114,7 @@ cmd_copy() {
   cfg=$(config_path)
 
   require_connection
+  require_db_name
 
   if db_exists "$main"; then
     echo "yes - database \"$main\" exists"
@@ -145,6 +157,8 @@ cmd_copy() {
 
 cmd_cleanup() {
   local victims main target found=0
+  require_connection
+  require_db_name
   main=$(main_db)
   victims=$(ask "SELECT datname FROM pg_database
                    WHERE starts_with(datname, '$main-')
@@ -208,6 +222,7 @@ cmd_cleanup() {
 cmd_init() {
   local root hooks hook sample main cfg new
   require_connection
+  require_db_name
 
   root="$ROOT"
   hooks="$root/.git/hooks"
@@ -226,8 +241,8 @@ cmd_init() {
   cat > "$hook" <<EOF
 #!/usr/bin/env bash
 # Installed by db-tool
+${HOOK_MARKER}${DB_NAME}
 [ "\$3" = "1" ] || exit 0
-branch=\$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 "$root/db-tool" copy || true
 EOF
   chmod +x "$hook"
@@ -258,7 +273,6 @@ while [ $# -gt 0 ]; do
         DB_NAME="${1#--dbname=}"
         shift
       fi
-      save_db_name "$DB_NAME"
       ;;
 
     -*)
