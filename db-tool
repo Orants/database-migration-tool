@@ -219,8 +219,8 @@ cmd_init() {
   set_prop "$cfg" "$CONFIG_VAR" "$new"
   echo "url=$(get_prop "$cfg" "$CONFIG_VAR")"
 
-  if [ -e  "$sample" ] && [ -e "$hook" ]; then
-    mv "$sample" "$hook"
+  if [ -e  "$sample" ] && [ ! -e "$hook" ]; then
+    cp "$sample" "$hook"
   fi
 
   cat > "$hook" <<EOF
