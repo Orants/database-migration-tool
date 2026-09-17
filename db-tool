@@ -34,8 +34,8 @@ load_db_name() {
 save_db_name() { printf '%s\n' "$1" > "$(db_conf_path)"; }
 
 ask() {
-  psql -X -q -t -A -P pager=off \
-       -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" -d postgres -c "$1"
+  psql --no-psqlrc --quiet --tuples-only --no-align --pset=pager=off \
+       --username="$DB_USER" --host="$DB_HOST" --port="$DB_PORT" --dbname=postgres --command="$1"
 }
 
 require_connection() {
@@ -169,7 +169,7 @@ cmd_cleanup() {
           [ -n "$name" ] || continue
           [ "$name" = "$main" ] && continue
           disconnect_everyone_from "$name"
-          dropdb --force -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" "$name"
+          dropdb --force --username="$DB_USER" --host="$DB_HOST" --port="$DB_PORT" "$name"
           echo "      dropped \"$name\""
         done <<< "$victims" ;;
       *)
@@ -195,7 +195,7 @@ cmd_cleanup() {
   case "$choice" in
     [yY])
       disconnect_everyone_from "$target"
-      dropdb --force -U "$DB_USER" -h "$DB_HOST" -p "$DB_PORT" "$target"
+      dropdb --force --username="$DB_USER" --host="$DB_HOST" --port="$DB_PORT" "$target"
       echo "      dropped \"$target\""
       ;;
     *)
