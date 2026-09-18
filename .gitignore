@@ -8,7 +8,7 @@ flyway.properties
 ./git/db-tool.conf
 
 ### IntelliJ IDEA ###
-.idea
+.idea/
 *.iws
 *.iml
 *.ipr
